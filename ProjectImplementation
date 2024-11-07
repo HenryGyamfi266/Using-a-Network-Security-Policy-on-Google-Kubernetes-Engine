@@ -1,0 +1,82 @@
+For this project, first thing that I had to do was clone resources needed for the work. Used the following processes:
+Copied the resources needed for this project from a Cloud Storage bucket with code:
+# gsutil cp -r gs://spls/gsp480/gke-network-policy-demo .
+Navigated into the directory for the demo with code:
+# cd gke-network-policy-demo
+Made the demo files executable with code:
+# chmod -R 755 *
+
+**Task 1** - Setting Up the Project
+First thing I did was to set the Google Cloud region and zone.
+1. Set the Google Cloud region on cloud shell with code:
+# gcloud config set compute/region "placeholder"
+Set the Google Cloud zone with code: 
+# gcloud config set compute/zone "placeholder"
+
+To ensure the appropriate APIs are enabled and to generate the terraform/terraform.tfvars file based on my gcloud defaults, run the code:
+# make setup-project
+Typed y when asked to confirm.
+This enabled the necessary Service APIs, and generated a terraform/terraform.tfvars file with the following keys.
+Provisioning the Kubernetes Engine cluster
+Next thing I did was apply the Terraform configuration within the project root with code:
+# make tf-apply
+When prompted, reviewed the generated plan and entered yes to deploy the environment.
+
+**Task2** - Validation Processes
+At this point, I had successfully deployed necessary infrastructure with Terraform
+1. Here, I ssh into the bastion for the remaining steps with code:
+# gcloud compute ssh gke-demo-bastion
+2. Once connected, I run the following command to install the gke-gcloud-auth-plugin on the VM with code:
+# sudo apt-get install google-cloud-sdk-gke-gcloud-auth-plugin
+3. Set export USE_GKE_GCLOUD_AUTH_PLUGIN=True in ~/.bashrc:
+# echo "export USE_GKE_GCLOUD_AUTH_PLUGIN=True" >> ~/.bashrc
+4. Run the following command:
+# source ~/.bashrc
+5. Run the code to force the config for this cluster to be updated to the Client-go Credential Plugin configuration:
+# gcloud container clusters get-credentials gke-demo-cluster --zone placeholder
+Once completed, I saw this message:
+kubeconfig entry generated for gke-demo-cluster.
+
+**Task3** - Installing the Hello Server
+The test application consists of one simple HTTP server, deployed as hello-server, and two clients, one of which will be labeled app=hello and the other app=not-hello.
+1. All three services can be deployed by applying the hello-app manifests. On the bastion, I run the code:
+# kubectl apply -f ./manifests/hello-app/
+2. Then I Verify all three pods have been successfully deployed with code:
+# kubectl get pods
+
+**Task 4** Confirming default access to the hello server
+1. First, I tail the "allowed" client with code:
+# kubectl logs --tail 10 -f $(kubectl get pods -oname -l app=hello)
+Pressed CTRL+C to exit the ruunning shell.
+2. Second, I tailed the logs of the "blocked" client with code:
+# kubectl logs --tail 10 -f $(kubectl get pods -oname -l app=not-hello)
+Pressed CTRL+C to exit.
+At this point,I notice that both pods are successfully able to connect to the hello-server service. This is because I have not yet defined a Network Policy to restrict access. 
+
+**Task5**-Restricting access with a Network Policy
+Here, I block access to the hello-server pod from all pods that are not labeled with app=hello.
+The policy definition I use is contained in manifests/network-policy.yaml
+1. First, I applied the policy with the following command:
+# kubectl apply -f ./manifests/network-policy.yaml
+2. Then tailed the logs of the "blocked" client again with code:
+# kubectl logs --tail 10 -f $(kubectl get pods -oname -l app=not-hello)
+3. The network policy has now prevented communication to the hello-server from the unlabeled pod. Then I pressed CTRL+C to exit the running shell.
+
+**Task6**-Restricting namespaces with Network Policies
+Here, I modify the network policy to only allow traffic from a designated namespace, then move the hello-allowed pod into that new namespace.
+1. First, deleted the existing network policy:
+# kubectl delete -f ./manifests/network-policy.yaml
+2. Created the namespaced version:
+# kubectl create -f ./manifests/network-policy-namespaced.yaml
+3. Then observed the logs of the hello-allowed-client pod in the default namespace with code:
+# kubectl logs --tail 10 -f $(kubectl get pods -oname -l app=hello)
+Noticed it is no longer able to connect to the hello-server. Pressed CTRL+C to exit.
+4. Deployed a second copy of the hello-clients app into the new namespace with code:
+# kubectl -n hello-apps apply -f ./manifests/hello-app/hello-client.yaml
+Next, checked the logs for the two new hello-app clients.
+5. Viewed the logs for the "hello"-labeled app in the app in the hello-apps namespace by running:
+# kubectl logs --tail 10 -f -n hello-apps $(kubectl get pods -oname -l app=hello -n hello-apps)
+
+Both clients are able to connect successfully because as of Kubernetes 1.10.x NetworkPolicies do not support restricting access to pods within a given namespace.
+
+
